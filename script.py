@@ -1,13 +1,11 @@
-from qiskit.circuit import QuantumCircuit
-from qiskit.circuit.library import *
-from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-from qiskit_aer import AerSimulator
-from qiskit_aer.primitives import EstimatorV2 as Estimator
-from qiskit_ibm_runtime import QiskitRuntimeService
-from qiskit_ibm_runtime import SamplerV2 as Sampler
-
 import random
 import time
+
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit.library import *
+from qiskit.visualization import plot_histogram
+from qiskit_aer import AerSimulator, Aer
 
 def get_parameters():
     random.seed()
@@ -39,9 +37,6 @@ def xor_fun(len, doors, inp):
     return res
 
 def is_balanced(len, doors, constant):
-    if constant:
-        return False, 0
-
     start_time = time.time()
     num = 2 ** len
     res = 0
@@ -49,7 +44,7 @@ def is_balanced(len, doors, constant):
     for i in range(num):
         word = [(i >> bit) & 1 for bit in range(len)]
 
-        if xor_fun(len, doors, word):
+        if constant or xor_fun(len, doors, word):
             res += 1
         else:
             res -= 1
@@ -58,8 +53,8 @@ def is_balanced(len, doors, constant):
 
 
 def init_circuit(len, doors, constant):
-    circuit = QuantumCircuit(len + 1, len + 1)
-    func = QuantumCircuit(len + 1, 0, name = "Uf")
+    circuit = QuantumCircuit(len + 1)
+    func = QuantumCircuit(len + 1, 0)
 
     hadamard_gate = HGate()
     xpauli_gate = XGate()
@@ -77,59 +72,54 @@ def init_circuit(len, doors, constant):
             if doors[i]:
                 func.append(cnot_gate, [i, len])
 
-    gate = func.to_gate()
-    circuit.append(gate, range(len + 1))
+        circuit = circuit.compose(func)
 
     circuit.barrier()
 
     for i in range(len):
         circuit.append(hadamard_gate, [i])
 
-    circuit.measure(range(len), range(len))
+    circuit.measure_all()
 
-    circuit.draw("mpl")
+    #circuit.draw("mpl")
 
     return circuit
 
-cheat = False
-local = True
+local = False
 
 n, c, d = get_parameters()
 
 print(f"Number of qubits: {n}")
 
-if cheat:
-    print(f"CNOT doors bitstring: {c}")
-    print(f"Constant function: {d}")
-
 qc = init_circuit(n, c, d)
 
-if cheat:
-    qc.decompose().draw("mpl")
+service = QiskitRuntimeService(channel="ibm_quantum")
 
-service = QiskitRuntimeService()
 if local:
-    real_backend = service.backend("ibm_kyiv")
-    backend = AerSimulator.from_backend(real_backend)
+    sim = Aer.get_backend('aer_simulator')
+    qc_transpiled = transpile(qc, sim)
+
+    result = AerSimulator().run(qc_transpiled, shots=1000).result()
+    counts = result.get_counts()
+    print(counts)
 else:
     backend = service.least_busy(operational=True, simulator=False, min_num_qubits=n+1)
+    print(backend.name)
 
-pm = generate_preset_pass_manager(backend=backend, optimization_level=1)
-isa_qc = pm.run(qc)
-isa_qc.draw("mpl", idle_wires=False)
-print(f">>> Circuit ops (ISA): {isa_qc.count_ops()}")
+    qc_transpiled = transpile(qc, backend, optimization_level=2)
+    #qc_transpiled.draw("mpl")
 
-sampler = Sampler(mode=backend)
-job = sampler.run([isa_qc])
+    sampler = Sampler(mode=backend)
+    qc_job = sampler.run([qc_transpiled], shots=1000)
 
-print(f">>> Job ID: {job.job_id()}")
-print(f">>> Job Status: {job.status()}")
+    print(qc_job.job_id)
+    print(qc_job.usage_estimation)
 
-result = job.result()
-print(f">>> {result}")
-if not local:
-    print(f"  > Expectation value: {result[0].data.evs}")
-    print(f"  > Metadata: {result[0].metadata}")
+    result = qc_job.result()
+    print(result)
+
+    plot_histogram(result[0].data.meas.get_counts())
 
 balanced, time_elapsed = is_balanced(n, c, d)
 print(f"Balanced (classic): {balanced}. Took {time_elapsed} seconds.")
+print(f"Real Constant Value (balanced otherwise): {c}")
