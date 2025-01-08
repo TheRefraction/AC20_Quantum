@@ -7,119 +7,132 @@ from qiskit.circuit.library import *
 from qiskit.visualization import plot_histogram
 from qiskit_aer import AerSimulator, Aer
 
-def get_parameters():
-    random.seed()
-
-    while True:
-        try:
-            num = int(input("Enter the number of qubits:"))
-            if 0 < num <= 100:
-                break
-            else:
-                print("Invalid number of qubits!")
-        except ValueError:
-            print("Invalid input!")
-
+def get_parameters(length):
     constant = random.randint(0, 1)
-    doors = []
-    if not constant:
-        doors = [random.randint(0, 1) for _ in range(num)]
+    if constant:
+        doors = [0 for _ in range(length)]
+    else:
+        doors = [random.randint(0, 1) for _ in range(length)]
+        doors[random.randint(0, length - 1)] = 1 # At least one door!!!
 
-    return num, doors, constant
+    return doors, constant
 
-def xor_fun(len, doors, inp):
+def xor_fun(length, doors, inputs):
     res = 0
 
-    for i in range(len):
-        if doors[i]:
-            res = res ^ inp[i]
+    for j in range(length):
+        if doors[j]:
+            res = res ^ inputs[j]
 
     return res
 
-def is_balanced(len, doors, constant):
+def is_constant(length, doors):
     start_time = time.time()
-    num = 2 ** len
+    num = 2 ** (length - 1) + 1 # Check that
     res = 0
 
-    for i in range(num):
-        word = [(i >> bit) & 1 for bit in range(len)]
+    for j in range(num):
+        word = [(j >> bit) & 1 for bit in range(length)]
 
-        if constant or xor_fun(len, doors, word):
+        if xor_fun(length, doors, word):
             res += 1
         else:
             res -= 1
 
-    return res == 0, (time.time() - start_time)
+    return (res == num or res == -num), (time.time() - start_time)
 
 
-def init_circuit(len, doors, constant):
-    circuit = QuantumCircuit(len + 1)
-    func = QuantumCircuit(len + 1, 0)
+def init_circuit(register_size, doors, constant):
+    # Define a quantum circuit with n + 1 qubits and bits
+    circuit = QuantumCircuit(register_size + 1, register_size)
 
+    # Define some alias
     hadamard_gate = HGate()
     xpauli_gate = XGate()
     cnot_gate = CXGate()
 
-    circuit.append(xpauli_gate, [n])
+    # Applying X on the ancilla
+    circuit.append(xpauli_gate, [register_size])
 
-    for i in range(len + 1):
-        circuit.append(hadamard_gate, [i])
+    # Applying H on all registers
+    for j in range(register_size + 1):
+        circuit.append(hadamard_gate, [j])
 
     circuit.barrier()
 
+    # Oracle
     if not constant:
-        for i in range(len):
-            if doors[i]:
-                func.append(cnot_gate, [i, len])
+        for j in range(register_size):
+            if doors[j]:
+                circuit.append(cnot_gate, [j, register_size])
 
-        circuit = circuit.compose(func)
 
     circuit.barrier()
 
-    for i in range(len):
-        circuit.append(hadamard_gate, [i])
+    # Applying H on all registers except the ancilla
+    for j in range(register_size):
+        circuit.append(hadamard_gate, [j])
 
-    circuit.measure_all()
+    # Measure all except the ancilla
+    circuit.measure(range(register_size), range(register_size))
 
-    #circuit.draw("mpl")
+    circuit.draw("mpl")
 
     return circuit
 
-local = False
+def main():
+    random.seed()
 
-n, c, d = get_parameters()
+    local = True
+    if local:
+        print("[INFO] : Running in simulation mode")
 
-print(f"Number of qubits: {n}")
+    service = QiskitRuntimeService(channel="ibm_quantum")
+    print("[INFO] : Running on IBM Quantum service")
 
-qc = init_circuit(n, c, d)
+    shots = 1000
+    print(f"[INFO] : Running experiments with {shots} shots")
 
-service = QiskitRuntimeService(channel="ibm_quantum")
+    optimization = 2
+    print(f"[INFO] : Circuit transpilation will be run with a {optimization}-level optimization")
 
-if local:
-    sim = Aer.get_backend('aer_simulator')
-    qc_transpiled = transpile(qc, sim)
+    for n in range(4, 64, 2):
+        print(f"Now running with {n} qubits (1st register)")
+        doors, constant = get_parameters(n)
 
-    result = AerSimulator().run(qc_transpiled, shots=1000).result()
-    counts = result.get_counts()
-    print(counts)
-else:
-    backend = service.least_busy(operational=True, simulator=False, min_num_qubits=n+1)
-    print(backend.name)
+        print("Initializing quantum circuit")
+        qc = init_circuit(n, doors, constant)
 
-    qc_transpiled = transpile(qc, backend, optimization_level=2)
-    #qc_transpiled.draw("mpl")
+        if local:
+            backend = Aer.get_backend('aer_simulator')
+        else:
+            backend = service.least_busy(operational=True, simulator=False, min_num_qubits=n+1)
 
-    sampler = Sampler(mode=backend)
-    qc_job = sampler.run([qc_transpiled], shots=1000)
+        print(f"Backend : {backend.name}")
 
-    print(qc_job.job_id)
-    print(qc_job.usage_estimation)
+        print("Transpiling quantum circuit")
+        isa_qc = transpile(qc, backend, optimization_level=optimization)
 
-    result = qc_job.result()
-    print(result)
+        if local:
+            result = AerSimulator().run(isa_qc, shots=shots).result()
+        else:
+            sampler = Sampler(mode=backend)
 
-    plot_histogram(result[0].data.meas.get_counts())
+            qc_job = sampler.run([isa_qc], shots=shots)
+            print(f"Running job : {qc_job.job_id}")
+            print(f"Time estimation : {qc_job.usage_estimation}")
 
-balanced, time_elapsed = is_balanced(n, c, d)
-print(f"Balanced (classic): {balanced}. Took {time_elapsed} seconds.")
-print(f"Real Constant Value (balanced otherwise): {c}")
+            result = qc_job.result()
+
+        print(f"Result : {result.get_counts()}")
+
+        if not local:
+            plot_histogram(result[0].data.meas.get_counts())
+
+        print(f"Real Constant Value : {constant}")
+        constant_res, time_elapsed = is_constant(n, doors)
+        print(f"Constant (classic) : {constant_res}. Took {time_elapsed} seconds.")
+        print("----------------------------------------------------------")
+
+
+main()
