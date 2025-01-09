@@ -7,6 +7,8 @@ from qiskit.circuit.library import *
 from qiskit.visualization import plot_histogram
 from qiskit_aer import AerSimulator, Aer
 
+import matplotlib.pyplot as plt
+
 def get_parameters(length):
     constant = random.randint(0, 1)
     if constant:
@@ -80,7 +82,7 @@ def init_circuit(register_size, doors, constant):
 
     return circuit
 
-def main():
+def run():
     random.seed()
 
     local = False
@@ -130,18 +132,53 @@ def main():
 
             #plot_histogram(result[0].data.c.get_counts())
 
-
         print(f"Real Constant Value : {constant}")
         constant_res, time_elapsed = is_constant(n, doors)
         print(f"Constant (classic) : {constant_res}. Took {time_elapsed} seconds.")
         print("----------------------------------------------------------")
 
-def test():
+def draw_histograms():
     service = QiskitRuntimeService(channel="ibm_quantum")
-    job = service.job('cxzwavk9b62g008h3nn0')
-    job_result = job.result()
+    job_ids = ['cxzwgjtcw2k0008jbs9g', 'cxzwhky6vek0008r7fc0', 'cxzwnfd6vek0008r7fhg', 'cxzwpgj01rbg008hp9bg',
+               'cxzwqj66vek0008r7fqg', 'cxzwrjjcw2k0008jbsrg', 'cxzwsj66vek0008r7fx0', 'cxzwz8d6vek0008r7g70',
+               'cxzx23rcw2k0008jbt3g', 'cxzx33mrta1g0086k7wg', 'cxzx43rrta1g0086k7yg', 'cxzx5qerta1g0086k83g',
+               'cxzx74c6vek0008r7gqg', 'cxzxahj9b62g008h3qng', 'cxzxpfs9b62g008h3rrg', 'cxzz94crta1g0086kgsg']
 
-    print(f"{job_result[0].data.c.get_counts()}")
-    plot_histogram(job_result[0].data.c.get_counts())
+    ket0_state = '0000'
 
-main()
+    for j in range(16):
+        job = service.job(job_ids[j])
+        job_result = job.result()[0].data.c.get_counts()
+
+        job_num = 'Job n°' + str(j + 1)
+
+        n = 0
+        if ket0_state in job_result:
+            n = job_result[ket0_state]
+
+        counts = {'|0..0>': n, 'Other': 1000 - n}
+        plot_histogram(counts, title=job_num)
+
+        ket0_state += '00'
+
+def draw_graphs():
+    x = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34]
+    y = [0.0, 0.0, 0.0, 0.0, 0.003, 0.010, 0.05, 0.26, 1.124, 3.965, 20.92, 73.429, 316.857, 1335.983, 6324.9, 44275]
+    y1 = [2.0 for _ in range(16)]
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, y, marker='o', label='Classic')
+    plt.plot(x, y1, marker='o', label='Quantum')
+
+    plt.title('Time complexity', fontsize=16)
+    plt.xlabel('Number of qubits', fontsize=14)
+    plt.ylabel('Time (s)', fontsize=14)
+
+    plt.grid(True, which='both', axis='both', linestyle='--', linewidth=0.5)
+    plt.legend(fontsize=12)
+
+    plt.show()
+
+#run()
+#draw_histograms()
+#draw_graphs()
