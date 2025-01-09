@@ -76,14 +76,14 @@ def init_circuit(register_size, doors, constant):
     # Measure all except the ancilla
     circuit.measure(range(register_size), range(register_size))
 
-    circuit.draw("mpl")
+    #circuit.draw("mpl")
 
     return circuit
 
 def main():
     random.seed()
 
-    local = True
+    local = False
     if local:
         print("[INFO] : Running in simulation mode")
 
@@ -115,6 +115,8 @@ def main():
 
         if local:
             result = AerSimulator().run(isa_qc, shots=shots).result()
+
+            print(f"Result : {result.get_counts()}")
         else:
             sampler = Sampler(mode=backend)
 
@@ -124,15 +126,22 @@ def main():
 
             result = qc_job.result()
 
-        print(f"Result : {result.get_counts()}")
+            print(f"Result : {result[0].data.c.get_counts()}")
 
-        if not local:
-            plot_histogram(result[0].data.meas.get_counts())
+            #plot_histogram(result[0].data.c.get_counts())
+
 
         print(f"Real Constant Value : {constant}")
         constant_res, time_elapsed = is_constant(n, doors)
         print(f"Constant (classic) : {constant_res}. Took {time_elapsed} seconds.")
         print("----------------------------------------------------------")
 
+def test():
+    service = QiskitRuntimeService(channel="ibm_quantum")
+    job = service.job('cxzwavk9b62g008h3nn0')
+    job_result = job.result()
+
+    print(f"{job_result[0].data.c.get_counts()}")
+    plot_histogram(job_result[0].data.c.get_counts())
 
 main()
